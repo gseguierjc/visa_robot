@@ -3,8 +3,11 @@
 import os, socket, time, subprocess, sys, shutil, json, mimetypes
 from pathlib import Path
 import requests
+import traceback
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -71,18 +74,90 @@ def main():
     # PASSWORD = os.environ["AIS_PASSWORD"]
     PASSWORD = "hqx-fjx3pwe6kva3RXT"  # <-- Reemplaza por método seguro (env vars)
 
-    print("Abriendo Chrome limpio (sin perfil)…")
+    print("Abriendo Chrome limpio (sin perfil)")
+    # Configura opciones de Chrome pensadas para ejecutar dentro de contenedores
     opts = Options()
-    # Si quieres forzar binario:
-    # opts.binary_location = CHROME_EXE
+    chrome_bin = os.environ.get("CHROME_BIN") or os.environ.get("GOOGLE_CHROME_SHIM")
+    if chrome_bin:
+        opts.binary_location = chrome_bin
+    # Modo headless "nuevo" y banderas útiles en contenedores
+    opts.add_argument("--headless=new")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--window-size=1920,1080")
     opts.add_experimental_option("excludeSwitches", ["enable-logging"])
 
-    driver = webdriver.Chrome(options=opts)
-    wait = WebDriverWait(driver, 60)
+    # Opciones para reducir detección como bot/automation
+    try:
+        # Evitar switches que indican automatisación
+        opts.add_experimental_option("excludeSwitches", ["enable-automation"])
+        opts.add_experimental_option('useAutomationExtension', False)
+    except Exception:
+        pass
+    # Desactivar bandera que delata Automation
+    opts.add_argument("--disable-blink-features=AutomationControlled")
+    # User-Agent común de Chrome para evitar fingerprints headless
+    opts.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
+
+    # Usa webdriver-manager en el contenedor para obtener chromedriver
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=opts)
+    # Inyectar script para ocultar navigator.webdriver antes de cualquier carga
+    try:
+        driver.execute_cdp_cmd(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {"source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"}
+        )
+    except Exception:
+        pass
+
+    # Aumentar tiempo de espera para navegar y detectar elementos
+    wait = WebDriverWait(driver, 120)
+
+    def _dump_debug(driver, tag: str = "debug"):
+        try:
+            logs_dir = Path("logs")
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            ts = time.strftime("%Y%m%d-%H%M%S")
+            screenshot_path = logs_dir / f"{tag}-{ts}.png"
+            html_path = logs_dir / f"{tag}-{ts}.html"
+            url_path = logs_dir / f"{tag}-{ts}.url.txt"
+            trace_path = logs_dir / f"{tag}-{ts}.trace.txt"
+            try:
+                driver.save_screenshot(str(screenshot_path))
+            except Exception as ex:
+                print(f"No pude guardar screenshot: {ex}")
+            try:
+                with open(html_path, "w", encoding="utf-8") as f:
+                    f.write(driver.page_source or "")
+            except Exception as ex:
+                print(f"No pude guardar page_source: {ex}")
+            try:
+                with open(url_path, "w", encoding="utf-8") as f:
+                    f.write(driver.current_url or "")
+            except Exception:
+                pass
+            try:
+                with open(trace_path, "w", encoding="utf-8") as f:
+                    traceback.print_exc(file=f)
+            except Exception:
+                pass
+            print(f"Debug dump guardado en: {logs_dir}")
+        except Exception as ex:
+            print(f"Fallo al crear logs dir: {ex}")
 
     try:
         driver.get(URL_SIGNIN)
-        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "form")))
+        try:
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "form")))
+        except Exception as e:
+            print("Timeout esperando el formulario de login; guardando información de debug...")
+            try:
+                _dump_debug(driver, "wait_form_timeout")
+            except Exception:
+                pass
+            raise
 
         # Correo
         email_input = wait.until(EC.element_to_be_clickable(
@@ -225,6 +300,13 @@ def main():
     except Exception as e:
         print("⚠️ Error durante el flujo:", e)
         notify_toast("Visa AIS", "Error al confirmar el login")
+        # Intenta capturar estado del navegador si está disponible
+        try:
+            if 'driver' in locals() and driver:
+                print("Guardando debug antes de salir...")
+                _dump_debug(driver, "exception")
+        except Exception:
+            pass
         raise
 
     print("Listo. Dejo Chrome abierto con tu sesión.")

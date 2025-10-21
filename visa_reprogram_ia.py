@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -98,11 +99,16 @@ def decide_action(earliest_iso: Optional[str], flow_ok: bool, context: dict | No
 URL_SIGNIN = "https://ais.usvisa-info.com/es-pe/niv/users/sign_in"
 
 def build_driver():
-    opts = webdriver.ChromeOptions()
-    opts.add_argument("--start-maximized")
-    # Reutiliza sesión (opcional):
-    # opts.add_argument(r"--user-data-dir=C:\Users\TUUSUARIO\AppData\Local\Google\Chrome\User Data")
-    # opts.add_argument("--profile-directory=Default")
+    opts = Options()
+    chrome_bin = os.environ.get("CHROME_BIN") or os.environ.get("GOOGLE_CHROME_SHIM")
+    if chrome_bin:
+        opts.binary_location = chrome_bin
+    # Flags útiles para contenedores
+    opts.add_argument("--headless=new")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--window-size=1920,1080")
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=opts)
 
 def login(driver, email, password, wait=60) -> bool:

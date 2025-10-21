@@ -1,0 +1,12 @@
+version: "3.8"
+services:
+  visa:
+    build: .
+    image: visa_robot:local
+    environment:
+      - AIS_USER=${AIS_USER}
+      - AIS_PASS=${AIS_PASS}
+      - NTFY_TOPIC=${NTFY_TOPIC}
+    tty: true
+    volumes:
+      - ./logs:/app/logs
