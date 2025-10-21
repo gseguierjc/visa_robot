@@ -148,7 +148,7 @@ def reprogram_appointment():
         driver.get(LOGIN_URL)
         time.sleep(8)  # espera breve para carga inicial
         print("URL actual:",driver.current_url)
-        print("Html parcial:",driver.page_source[:2000])  # depuración
+        # print("Html parcial:",driver.page_source[:2000])  # depuración
         # Paso 2: introducir credenciales
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "form")))
         driver.find_element(By.CSS_SELECTOR, "input[type='email']").send_keys(USERNAME)
