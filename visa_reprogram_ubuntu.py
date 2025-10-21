@@ -135,8 +135,10 @@ def reprogram_appointment():
     opts.add_argument("--headless=new")    
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
-
-
+    opts.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    opts.add_argument("--disable-blink-features=AutomationControlled")
+    opts.add_experimental_option("excludeSwitches", ["enable-automation"])
+    opts.add_experimental_option('useAutomationExtension', False)
     # service = Service(ChromeDriverManager().install())
     service =Service("/usr/local/bin/chromedriver")
     driver = webdriver.Chrome(service=service, options=opts)
