@@ -445,7 +445,7 @@ def reprogram_appointment():
         except Exception as e:
             print(f"No se pudo seleccionar fecha/hora: {e}")
               
-
+        driver.execute_script("window.scrollTo(0, 250);")
          # Screenshot
         screenshot_path = "visa_status_repro.png"
         driver.save_screenshot(screenshot_path)
