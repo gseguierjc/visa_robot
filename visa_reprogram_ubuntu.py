@@ -295,6 +295,33 @@ def reprogram_appointment():
                     f"La fecha disponible {selected_date_str} es posterior al límite "
                     f"{DATE_THRESHOLD.date()} – no se reprogramará."
                 )
+                driver.execute_script("window.scrollTo(0, 220);")
+                # Screenshot
+                screenshot_path = "visa_status_repro.png"
+                driver.save_screenshot(screenshot_path)
+                print(f"Screenshot guardado en {screenshot_path}")
+                try:
+                    ntfy_disabled = False
+                    if ntfy_disabled:
+                        print("NTFY_DISABLED activo; no se envía notificación (modo desarrollo).")
+                    else:
+                        ntfy_base  = os.environ.get("NTFY_URL", "https://ntfy.sh").rstrip('/')
+                        ntfy_topic = os.environ.get("NTFY_TOPIC", TOPIC)
+                        ntfy_title = os.environ.get("NTFY_TITLE", "Aviso:VISA Fecha disponible encontrada " + fecha_disponible)
+                        # ntfy_token = os.environ.get("NTFY_TOKEN")  # opcional
+                    # Fuerza content-type por extensión para evitar ambigüedades
+                        content_type = "image/png" if Path(screenshot_path).suffix.lower() == ".png" else "image/jpeg"
+                        ntfy_send_image_raw(
+                            topic=ntfy_topic,
+                            screenshot_path=screenshot_path,
+                            title=ntfy_title,
+                            ntfy_base=ntfy_base,
+                            # token=ntfy_token,
+                            content_type=content_type
+                        )
+                        print(f"Notificación enviada a ntfy: {ntfy_base}/{ntfy_topic}")
+                except Exception as e: 
+                        print(f"No se pudo verificar/enviar notificación: {e}")
                 return
 
             # Paso 6: seleccionar la primera hora disponible
