@@ -136,6 +136,7 @@ def reprogram_appointment():
     opts.add_argument("--headless=new")    
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--window-size=1920,1200")
     opts.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     opts.add_argument("--disable-blink-features=AutomationControlled")
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
@@ -143,6 +144,7 @@ def reprogram_appointment():
     # service = Service(ChromeDriverManager().install())
     service =Service("/usr/local/bin/chromedriver")
     driver = webdriver.Chrome(service=service, options=opts)
+    driver.set_window_size(1920, 1200)
     wait = WebDriverWait(driver, 60)
     try:
         # Paso 1: abrir la página de inicio de sesión
@@ -284,6 +286,7 @@ def reprogram_appointment():
                 
 
             selected_date = datetime.strptime(selected_date_str, "%Y-%m-%d")
+            
             print(f"Primera cita disponible encontrada: {selected_date_str}")
 
             # Compara con el umbral definido
