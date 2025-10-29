@@ -128,6 +128,7 @@ def reprogram_appointment():
     usuario y no realiza cambios.
     """
     # Inicializa el navegador (usa Chrome por defecto)
+    fecha_disponible = ""
     opts = Options()
     chrome_bin = os.environ.get("CHROME_BIN") or os.environ.get("GOOGLE_CHROME_SHIM")
     if chrome_bin:
@@ -276,6 +277,7 @@ def reprogram_appointment():
         try:
         # Paso 5: buscar la fecha disponible más próxima
             selected_date_str = find_next_available_date(driver, wait)
+            fecha_disponible = selected_date_str
             print(selected_date_str)
             if not selected_date_str:
                 print("No se encontró ninguna fecha disponible en el rango evaluado.")
@@ -457,7 +459,7 @@ def reprogram_appointment():
             else:
                 ntfy_base  = os.environ.get("NTFY_URL", "https://ntfy.sh").rstrip('/')
                 ntfy_topic = os.environ.get("NTFY_TOPIC", TOPIC)
-                ntfy_title = os.environ.get("NTFY_TITLE", "Aviso:VISA Fecha disponible encontrada " + selected_date_str)
+                ntfy_title = os.environ.get("NTFY_TITLE", "Aviso:VISA Fecha disponible encontrada " + fecha_disponible)
                 # ntfy_token = os.environ.get("NTFY_TOKEN")  # opcional
              # Fuerza content-type por extensión para evitar ambigüedades
                 content_type = "image/png" if Path(screenshot_path).suffix.lower() == ".png" else "image/jpeg"
