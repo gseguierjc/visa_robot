@@ -445,7 +445,7 @@ def reprogram_appointment():
         except Exception as e:
             print(f"No se pudo seleccionar fecha/hora: {e}")
               
-        driver.execute_script("window.scrollTo(0, 250);")
+        driver.execute_script("window.scrollTo(0, 220);")
          # Screenshot
         screenshot_path = "visa_status_repro.png"
         driver.save_screenshot(screenshot_path)
@@ -457,7 +457,7 @@ def reprogram_appointment():
             else:
                 ntfy_base  = os.environ.get("NTFY_URL", "https://ntfy.sh").rstrip('/')
                 ntfy_topic = os.environ.get("NTFY_TOPIC", TOPIC)
-                ntfy_title = os.environ.get("NTFY_TITLE", "Aviso: Cambio en disponibilidad de citas VISA")
+                ntfy_title = os.environ.get("NTFY_TITLE", "Aviso:VISA Fecha disponible encontrada " + selected_date_str)
                 # ntfy_token = os.environ.get("NTFY_TOKEN")  # opcional
              # Fuerza content-type por extensión para evitar ambigüedades
                 content_type = "image/png" if Path(screenshot_path).suffix.lower() == ".png" else "image/jpeg"
