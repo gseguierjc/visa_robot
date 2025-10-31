@@ -48,7 +48,7 @@ PASSWORD: str = "hqx-fjx3pwe6kva3RXT"
 TOPIC = "jcgs-ntfy-notify"  # topic por defecto si no pasas NTFY_TOPIC
 # URL base para iniciar sesión
 LOGIN_URL: str = "https://ais.usvisa-info.com/es-pe/niv/users/sign_in"
-RETRY_DELAY_SEC = 60                    # espera entre intentos (1 min)
+
 # Límite para considerar la fecha como válida.
 # Se reprogramará solo si la primera fecha disponible es igual o anterior a
 # agosto de 2026. Para ello se establece el umbral al 31 de agosto de 2026.
@@ -125,7 +125,6 @@ def reprogram_appointment():
     usuario y no realiza cambios.
     """
     # Inicializa el navegador (usa Chrome por defecto)
-    fecha_disponible = ""
     driver = webdriver.Chrome()
     wait = WebDriverWait(driver, 60)
     try:
@@ -256,33 +255,207 @@ def reprogram_appointment():
 
 
         print("Clic en 'Reprogramar cita' realizado.")
-        intento = 0
-        max_retries = 15
-        while intento <= max_retries:
-            print(f"Intento {intento} de {max_retries}...")
-            if intento == 0:
-                buscar_fecha_disponible(driver, wait)
-                intento += 1
-            else :
-            # refrescar, esperar y reintentar
+        try:
+        # Paso 5: buscar la fecha disponible más próxima
+            selected_date_str = find_next_available_date(driver, wait)
+            print(selected_date_str)
+            if not selected_date_str:
+                print("No se encontró ninguna fecha disponible en el rango evaluado.")
+                
+
+            selected_date = datetime.strptime(selected_date_str, "%Y-%m-%d")
+            print(f"Primera cita disponible encontrada: {selected_date_str}")
+
+            # Compara con el umbral definido
+            if selected_date >= DATE_THRESHOLD:
+                print(
+                    f"La fecha disponible {selected_date_str} es posterior al límite "
+                    f"{DATE_THRESHOLD.date()} – no se reprogramará."
+                )
+                return
+
+            # Paso 6: seleccionar la primera hora disponible
+            try:
+                import re
+
+                def looks_like_time(txt: str) -> bool:
+                    if not txt:
+                        return False
+                    s = txt.strip()
+                    patterns = [
+                        r"^\d{1,2}:\d{2}(\s?[AaPp][Mm])?$",
+                        r"^\d{1,2}\s?[AaPp][Mm]$",
+                    ]
+                    return any(re.match(p, s) for p in patterns)
+
+                # Localiza el control (container o <select>) y haz click para desplegar si aplica
+                time_widget = wait.until(
+                    EC.element_to_be_clickable((By.ID, "appointments_consulate_appointment_time"))
+                )
                 try:
-                        time.sleep(RETRY_DELAY_SEC)
-                        driver.refresh()
-                        # Espera a que el documento esté en 'complete'
-                        WebDriverWait(driver,5).until(
-                            lambda d: d.execute_script("return document.readyState") == "complete"
-                        )
-                        buscar_fecha_disponible(driver, wait)
-                        intento += 1
-                        if intento == max_retries:
-                            take_screenshot(driver, TOPIC, "","Ultima intento de reprogramación en busqueda")    
-                        continue
+                    time_widget.click()
                 except Exception:
+                    driver.execute_script("arguments[0].click();", time_widget)
+                time.sleep(0.3)  # breve espera para que el dropdown/DOM se actualice
+
+                selected_time = ""
+
+                # Intento 1: si existe un <select> real dentro del widget, recorrer sus <option>
+                try:
+                    select_el = time_widget if time_widget.tag_name.lower() == "select" else time_widget.find_element(By.TAG_NAME, "select")
+                    sel = Select(select_el)
+                    WebDriverWait(driver, 5).until(lambda d: len(sel.options) > 0)
+
+                    chosen_idx = None
+                    for i, opt in enumerate(sel.options):
+                        # saltar opciones deshabilitadas
+                        disabled = (opt.get_attribute("disabled") or "").lower() in ("true", "disabled")
+                        aria_disabled = (opt.get_attribute("aria-disabled") or "").lower() in ("true", "disabled")
+                        if disabled or aria_disabled:
+                            continue
+                        text = (opt.text or "").strip()
+                        val = (opt.get_attribute("value") or "").strip()
+                        if i == 0 and (text == "" or text.lower().startswith("seleccione") or text.lower().startswith("select")):
+                            continue
+                        if looks_like_time(text) or looks_like_time(val):
+                            chosen_idx = i
+                            break
+                        if chosen_idx is None and text:
+                            chosen_idx = i
+
+                    if chosen_idx is None:
+                        raise Exception("No hay opciones válidas en el <select> de horas.")
+
+                    sel.select_by_index(chosen_idx)
+                    # disparar change por si la página necesita reaccionar
+                    try:
+                        driver.execute_script("arguments[0].dispatchEvent(new Event('change', {bubbles:true}));", select_el)
+                    except Exception:
                         pass
-                        print(f"↻ Página refrescada. Esperando {RETRY_DELAY_SEC } segundos antes de reintentar…")
-                        time.sleep(RETRY_DELAY_SEC )
-                return False
-            continue
+
+                    selected_time = (sel.first_selected_option.text or sel.first_selected_option.get_attribute("value") or "").strip()
+                except Exception:
+                    # Intento 2: dropdown/lista personalizada -> buscar opciones visibles dentro del widget
+                    option_xpath_candidates = [
+                        ".//option",
+                        ".//ul//li",
+                        ".//div[contains(@class,'dropdown') or contains(@class,'time')]//a",
+                        ".//div[@role='listbox']//div[@role='option']",
+                        ".//li[contains(@class,'time-option')]",
+                        ".//a[contains(@class,'time')]",
+                        "//ul[contains(@class,'ui-datepicker-time-list')]/li"
+                    ]
+                    option_el = None
+                    option_text = ""
+                    for xp in option_xpath_candidates:
+                        try:
+                            opts = time_widget.find_elements(By.XPATH, xp)
+                            # si no hay dentro del widget, buscar globalmente (algún dropdown se añade en otro nodo)
+                            if not opts:
+                                opts = driver.find_elements(By.XPATH, xp)
+                            if not opts:
+                                continue
+                            # escoger la primera opción que parezca hora y no esté deshabilitada
+                            for cand in opts:
+                                # comprobar visibilidad y estado
+                                try:
+                                    if not cand.is_displayed():
+                                        continue
+                                except Exception:
+                                    pass
+                                cls = (cand.get_attribute("class") or "").lower()
+                                aria_disabled = (cand.get_attribute("aria-disabled") or "").lower()
+                                disabled = (cand.get_attribute("disabled") or "").lower()
+                                if "disabled" in cls or aria_disabled in ("true","disabled") or disabled in ("true","disabled"):
+                                    continue
+                                txt = (cand.text or "").strip() or (cand.get_attribute("data-value") or "").strip()
+                                if looks_like_time(txt):
+                                    option_el = cand
+                                    option_text = txt
+                                    break
+                            if option_el:
+                                break
+                            # fallback: pick first visible non-empty
+                            for cand in opts:
+                                try:
+                                    if not cand.is_displayed():
+                                        continue
+                                except Exception:
+                                    pass
+                                txt = (cand.text or "").strip()
+                                if txt:
+                                    option_el = cand
+                                    option_text = txt
+                                    break
+                            if option_el:
+                                break
+                        except Exception:
+                            continue
+
+                    if not option_el:
+                        raise Exception("No se encontraron opciones en el dropdown/lista de horas.")
+
+                    # Asegurar que la opción esté en viewport y clicar
+                    try:
+                        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", option_el)
+                        option_el.click()
+                    except Exception:
+                        try:
+                            driver.execute_script("arguments[0].click();", option_el)
+                        except Exception as e:
+                            raise Exception(f"No se pudo clicar la opción encontrada: {e}")
+
+                    selected_time = option_text or (option_el.text or option_el.get_attribute("data-value") or "").strip()
+
+                # Validar que el texto obtenido parezca una hora válida
+                if not looks_like_time(selected_time):
+                    raise Exception(f"Hora seleccionada no válida o vacía: '{selected_time}'")
+
+                print(f"Hora seleccionada (validada): {selected_time}")
+
+            except Exception as e:
+                print(f"No se pudo localizar/validar el selector de horas: {e}")
+
+            confirm_button = wait.until(
+                EC.element_to_be_clickable(
+                    (By.ID, "appointments_submit")
+                )
+            )
+            confirm_button.click()
+            print("La cita se ha reprogramado exitosamente.")
+
+        except Exception as e:
+            print(f"No se pudo seleccionar fecha/hora: {e}")
+              
+
+         # Screenshot
+        screenshot_path = "visa_status_repro.png"
+        driver.save_screenshot(screenshot_path)
+        print(f"Screenshot guardado en {screenshot_path}")
+        try:
+            ntfy_disabled = False
+            if ntfy_disabled:
+                print("NTFY_DISABLED activo; no se envía notificación (modo desarrollo).")
+            else:
+                ntfy_base  = os.environ.get("NTFY_URL", "https://ntfy.sh").rstrip('/')
+                ntfy_topic = os.environ.get("NTFY_TOPIC", TOPIC)
+                ntfy_title = os.environ.get("NTFY_TITLE", "Aviso: Cambio en disponibilidad de citas VISA")
+                # ntfy_token = os.environ.get("NTFY_TOKEN")  # opcional
+             # Fuerza content-type por extensión para evitar ambigüedades
+                content_type = "image/png" if Path(screenshot_path).suffix.lower() == ".png" else "image/jpeg"
+                ntfy_send_image_raw(
+                    topic=ntfy_topic,
+                    screenshot_path=screenshot_path,
+                    title=ntfy_title,
+                    ntfy_base=ntfy_base,
+                    # token=ntfy_token,
+                    content_type=content_type
+                )
+                print(f"Notificación enviada a ntfy: {ntfy_base}/{ntfy_topic}")
+
+        except Exception as e:
+                print(f"No se pudo verificar/enviar notificación: {e}")
+
     finally:
         # Deja el navegador abierto para revisar o cierra según necesidad
         pass
@@ -311,195 +484,6 @@ def ntfy_send_image_raw(topic: str, screenshot_path: str,
         r = requests.post(url, data=f, headers=headers, timeout=30)
     r.raise_for_status()
     return r
-def take_screenshot(driver: webdriver.Chrome, topic: str, fecha_disponible: str = "",message: str = ""):
-     driver.execute_script("window.scrollTo(0, 220);")
-      # Screenshot
-     screenshot_path = "visa_status_repro.png"
-     driver.save_screenshot(screenshot_path)
-     print(f"Screenshot guardado en {screenshot_path}")
-     try:
-         ntfy_disabled = False
-         if ntfy_disabled:
-             print("NTFY_DISABLED activo; no se envía notificación (modo desarrollo).")
-         else:
-             ntfy_base  = os.environ.get("NTFY_URL", "https://ntfy.sh").rstrip('/')
-             ntfy_topic = os.environ.get("NTFY_TOPIC", topic)
-             ntfy_title = os.environ.get("NTFY_TITLE", message + fecha_disponible)
-             # ntfy_token = os.environ.get("NTFY_TOKEN")  # opcional
-          # Fuerza content-type por extensión para evitar ambigüedades
-             content_type = "image/png" if Path(screenshot_path).suffix.lower() == ".png" else "image/jpeg"
-             ntfy_send_image_raw(
-                 topic=ntfy_topic,
-                 screenshot_path=screenshot_path,
-                 title=ntfy_title,
-                 ntfy_base=ntfy_base,
-                 # token=ntfy_token,
-                 content_type=content_type
-             )
-             print(f"Notificación enviada a ntfy: {ntfy_base}/{ntfy_topic}")
-     except Exception as e:
-             print(f"No se pudo verificar/enviar notificación: {e}")
-def buscar_fecha_disponible(driver: webdriver.Chrome, wait: WebDriverWait,topic: str = TOPIC):
-    print("Iniciando búsqueda de fecha disponible...")
-    try:
-    # Paso 5: buscar la fecha disponible más próxima
-        selected_date_str = find_next_available_date(driver, wait)
-        fecha_disponible = selected_date_str
-        print(selected_date_str)
-        if not selected_date_str:
-            print("No se encontró ninguna fecha disponible en el rango evaluado.")
-
-        selected_date = datetime.strptime(selected_date_str, "%Y-%m-%d")
-
-        print(f"Primera cita disponible encontrada: {selected_date_str}")
-        # Compara con el umbral definido
-        if selected_date >= DATE_THRESHOLD:
-            print(
-                f"La fecha disponible {selected_date_str} es posterior al límite "
-                f"{DATE_THRESHOLD.date()} – no se reprogramará."
-            )
-            # Screenshot
-            
-            return False
-        # Paso 6: seleccionar la primera hora disponible
-        try:
-            import re
-            def looks_like_time(txt: str) -> bool:
-                if not txt:
-                    return False
-                s = txt.strip()
-                patterns = [
-                    r"^\d{1,2}:\d{2}(\s?[AaPp][Mm])?$",
-                    r"^\d{1,2}\s?[AaPp][Mm]$",
-                ]
-                return any(re.match(p, s) for p in patterns)
-            # Localiza el control (container o <select>) y haz click para desplegar si aplica
-            time_widget = wait.until(
-                EC.element_to_be_clickable((By.ID, "appointments_consulate_appointment_time"))
-            )
-            try:
-                time_widget.click()
-            except Exception:
-                driver.execute_script("arguments[0].click();", time_widget)
-            time.sleep(0.3)  # breve espera para que el dropdown/DOM se actualice
-            selected_time = ""
-            # Intento 1: si existe un <select> real dentro del widget, recorrer sus <option>
-            try:
-                select_el = time_widget if time_widget.tag_name.lower() == "select" else time_widget.find_element(By.TAG_NAME, "select")
-                sel = Select(select_el)
-                WebDriverWait(driver, 5).until(lambda d: len(sel.options) > 0)
-                chosen_idx = None
-                for i, opt in enumerate(sel.options):
-                    # saltar opciones deshabilitadas
-                    disabled = (opt.get_attribute("disabled") or "").lower() in ("true", "disabled")
-                    aria_disabled = (opt.get_attribute("aria-disabled") or "").lower() in ("true", "disabled")
-                    if disabled or aria_disabled:
-                        continue
-                    text = (opt.text or "").strip()
-                    val = (opt.get_attribute("value") or "").strip()
-                    if i == 0 and (text == "" or text.lower().startswith("seleccione") or text.lower().startswith("select")):
-                        continue
-                    if looks_like_time(text) or looks_like_time(val):
-                        chosen_idx = i
-                        break
-                    if chosen_idx is None and text:
-                        chosen_idx = i
-                if chosen_idx is None:
-                    raise Exception("No hay opciones válidas en el <select> de horas.")
-                sel.select_by_index(chosen_idx)
-                # disparar change por si la página necesita reaccionar
-                try:
-                    driver.execute_script("arguments[0].dispatchEvent(new Event('change', {bubbles:true}));", select_el)
-                except Exception:
-                    pass
-                selected_time = (sel.first_selected_option.text or sel.first_selected_option.get_attribute("value") or "").strip()
-            except Exception:
-                # Intento 2: dropdown/lista personalizada -> buscar opciones visibles dentro del widget
-                option_xpath_candidates = [
-                    ".//option",
-                    ".//ul//li",
-                    ".//div[contains(@class,'dropdown') or contains(@class,'time')]//a",
-                    ".//div[@role='listbox']//div[@role='option']",
-                    ".//li[contains(@class,'time-option')]",
-                    ".//a[contains(@class,'time')]",
-                    "//ul[contains(@class,'ui-datepicker-time-list')]/li"
-                ]
-                option_el = None
-                option_text = ""
-                for xp in option_xpath_candidates:
-                    try:
-                        opts = time_widget.find_elements(By.XPATH, xp)
-                        # si no hay dentro del widget, buscar globalmente (algún dropdown se añade en otro nodo)
-                        if not opts:
-                            opts = driver.find_elements(By.XPATH, xp)
-                        if not opts:
-                            continue
-                        # escoger la primera opción que parezca hora y no esté deshabilitada
-                        for cand in opts:
-                            # comprobar visibilidad y estado
-                            try:
-                                if not cand.is_displayed():
-                                    continue
-                            except Exception:
-                                pass
-                            cls = (cand.get_attribute("class") or "").lower()
-                            aria_disabled = (cand.get_attribute("aria-disabled") or "").lower()
-                            disabled = (cand.get_attribute("disabled") or "").lower()
-                            if "disabled" in cls or aria_disabled in ("true","disabled") or disabled in ("true","disabled"):
-                                continue
-                            txt = (cand.text or "").strip() or (cand.get_attribute("data-value") or "").strip()
-                            if looks_like_time(txt):
-                                option_el = cand
-                                option_text = txt
-                                break
-                        if option_el:
-                            break
-                        # fallback: pick first visible non-empty
-                        for cand in opts:
-                            try:
-                                if not cand.is_displayed():
-                                    continue
-                            except Exception:
-                                pass
-                            txt = (cand.text or "").strip()
-                            if txt:
-                                option_el = cand
-                                option_text = txt
-                                break
-                        if option_el:
-                            break
-                    except Exception:
-                        continue
-                if not option_el:
-                    raise Exception("No se encontraron opciones en el dropdown/lista de horas.")
-                # Asegurar que la opción esté en viewport y clicar
-                try:
-                    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", option_el)
-                    option_el.click()
-                except Exception:
-                    try:
-                        driver.execute_script("arguments[0].click();", option_el)
-                    except Exception as e:
-                        raise Exception(f"No se pudo clicar la opción encontrada: {e}")
-                selected_time = option_text or (option_el.text or option_el.get_attribute("data-value") or "").strip()
-            # Validar que el texto obtenido parezca una hora válida
-            if not looks_like_time(selected_time):
-                raise Exception(f"Hora seleccionada no válida o vacía: '{selected_time}'")
-            print(f"Hora seleccionada (validada): {selected_time}")
-        except Exception as e:
-            print(f"No se pudo localizar/validar el selector de horas: {e}")
-        confirm_button = wait.until(
-            EC.element_to_be_clickable(
-                (By.ID, "appointments_submit")
-            )
-        )
-        
-        confirm_button.click()
-        print("La cita se ha reprogramado exitosamente.")
-        take_screenshot(driver, topic, fecha_disponible,"Reprogramación exitosa a ")  
-    except Exception as e:
-        print(f"No se pudo seleccionar fecha/hora: {e}")
-        take_screenshot(driver, topic, fecha_disponible,"Error durante selección de fecha/hora")
 
 
 if __name__ == "__main__":
