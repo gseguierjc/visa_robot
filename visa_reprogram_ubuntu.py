@@ -56,7 +56,7 @@ RETRY_DELAY_SEC = 60
 # Se reprogramará solo si la primera fecha disponible es igual o anterior a
 # agosto de 2026. Para ello se establece el umbral al 31 de agosto de 2026.
 DATE_THRESHOLD: datetime = datetime(2026, 6, 30)
-
+##fecha nueva##
 
 def find_next_available_date(
     driver: webdriver.Chrome,
