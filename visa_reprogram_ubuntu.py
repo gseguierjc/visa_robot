@@ -513,6 +513,7 @@ def buscar_fecha_disponible(driver: webdriver.Chrome, wait: WebDriverWait,topic:
             print(f"Hora seleccionada (validada): {selected_time}")
         except Exception as e:
             print(f"No se pudo localizar/validar el selector de horas: {e}")
+            take_screenshot(driver, topic, fecha_disponible,"No se pudo localizar/validar el selector de horas")
         confirm_button = wait.until(
             EC.element_to_be_clickable(
                 (By.ID, "appointments_submit")
