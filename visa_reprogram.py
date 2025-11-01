@@ -55,7 +55,7 @@ RETRY_DELAY_SEC = 40                    # espera entre intentos (1 min)
 DATE_THRESHOLD: datetime = datetime(2026, 6, 30)
 DATE_THRESHOLD_INI: datetime = datetime(2025, 11, 20)
 MAX_RETRIES = 30
-
+TOGGLE_URL = "https://api.npoint.io/4abcad14dd043119f323"
 
 def find_next_available_date(
     driver: webdriver.Chrome,
@@ -127,6 +127,13 @@ def reprogram_appointment():
     usuario y no realiza cambios.
     """
     # Inicializa el navegador (usa Chrome por defecto)
+
+        # Inicializa el navegador (usa Chrome por defecto)
+    if not(is_enabled()):
+        print("🔴 Toggle desactivado desde el endpoint. Interrumpiendo flujo.")
+        return False # rompe el flujo de esta función
+    # … resto de tu automatización …
+    print("✅ Toggle Activado. Continuando flujo…")
     fecha_disponible = ""
     driver = webdriver.Chrome()
     wait = WebDriverWait(driver, 60)
@@ -559,6 +566,20 @@ def confirmar_popup_reprogramacion(driver, wait: WebDriverWait, timeout: int = 2
     WebDriverWait(driver, timeout).until(EC.invisibility_of_element_located(modal_locator))
     print("✅ Popup de confirmación aceptado.")
 
-
+def is_enabled(url: str = TOGGLE_URL, timeout: float = 3.0) -> bool:
+    """
+    Devuelve True si el JSON del endpoint trae {"enabled": true}.
+    Si hay error de red o formato, devuelve False por seguridad.
+    """
+    try:
+        r = requests.get(url, timeout=timeout)
+        r.raise_for_status()
+        data = r.json()
+        val = data.get("enabled", False)
+        # acepta true, "true", 1 por si el backend cambia
+        return bool(val) if not isinstance(val, str) else val.strip().lower() == "true"
+    except Exception:
+        return False
+    
 if __name__ == "__main__":
     reprogram_appointment()
