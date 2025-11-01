@@ -57,7 +57,7 @@ RETRY_DELAY_SEC = 40
 # agosto de 2026. Para ello se establece el umbral al 31 de agosto de 2026.
 DATE_THRESHOLD: datetime = datetime(2026, 6, 30)
 DATE_THRESHOLD_INI: datetime = datetime(2026, 1, 15)
-MAX_RETRIES = 30
+MAX_RETRIES = 15
 
 
 
