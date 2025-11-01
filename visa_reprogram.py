@@ -48,11 +48,13 @@ PASSWORD: str = "hqx-fjx3pwe6kva3RXT"
 TOPIC = "jcgs-ntfy-notify"  # topic por defecto si no pasas NTFY_TOPIC
 # URL base para iniciar sesión
 LOGIN_URL: str = "https://ais.usvisa-info.com/es-pe/niv/users/sign_in"
-RETRY_DELAY_SEC = 60                    # espera entre intentos (1 min)
+RETRY_DELAY_SEC = 40                    # espera entre intentos (1 min)
 # Límite para considerar la fecha como válida.
 # Se reprogramará solo si la primera fecha disponible es igual o anterior a
 # agosto de 2026. Para ello se establece el umbral al 31 de agosto de 2026.
-DATE_THRESHOLD: datetime = datetime(2026, 8, 31)
+DATE_THRESHOLD: datetime = datetime(2026, 6, 30)
+DATE_THRESHOLD_INI: datetime = datetime(2026, 1, 15)
+MAX_RETRIES = 30
 
 
 def find_next_available_date(
@@ -257,7 +259,7 @@ def reprogram_appointment():
 
         print("Clic en 'Reprogramar cita' realizado.")
         intento = 0
-        max_retries = 15
+        max_retries = MAX_RETRIES
         while intento <= max_retries:
             print(f"Intento {intento} de {max_retries}...")
             if intento == 0:
@@ -353,10 +355,9 @@ def buscar_fecha_disponible(driver: webdriver.Chrome, wait: WebDriverWait,topic:
 
         print(f"Primera cita disponible encontrada: {selected_date_str}")
         # Compara con el umbral definido
-        if selected_date >= DATE_THRESHOLD:
+        if not(DATE_THRESHOLD_INI <= selected_date <= DATE_THRESHOLD):
             print(
-                f"La fecha disponible {selected_date_str} es posterior al límite "
-                f"{DATE_THRESHOLD.date()} – no se reprogramará."
+                f"Fecha {selected_date_str} fuera del rango [{DATE_THRESHOLD_INI}, {DATE_THRESHOLD}] → NO reprogramar."
             )
             # Screenshot
             
@@ -495,11 +496,68 @@ def buscar_fecha_disponible(driver: webdriver.Chrome, wait: WebDriverWait,topic:
         )
         
         confirm_button.click()
+
+        confirmar_popup_reprogramacion(driver, wait)
+
+
         print("La cita se ha reprogramado exitosamente.")
         take_screenshot(driver, topic, fecha_disponible,"Reprogramación exitosa a ")  
     except Exception as e:
         print(f"No se pudo seleccionar fecha/hora: {e}")
         take_screenshot(driver, topic, fecha_disponible,"Error durante selección de fecha/hora")
+
+def confirmar_popup_reprogramacion(driver, wait: WebDriverWait, timeout: int = 20):
+    """
+    Confirma el popup '¿Desea reprogramar esta cita?'.
+    Soporta <a class="button alert">Confirmar</a> o <button>Confirmar</button>.
+    """
+
+    # 1) Localiza un modal "vivo" (visible)
+    modal_locator = (
+        By.XPATH,
+        # Modal típico de Foundation: div.reveal con aria-hidden="false"
+        # También contempla role="dialog" y clase "modal" por si cambia.
+        "//div[(contains(@class,'reveal') or contains(@class,'modal') or @role='dialog')]"
+        "[@aria-hidden='false' or not(@aria-hidden)]"
+    )
+    modal = wait.until(EC.visibility_of_element_located(modal_locator))
+
+    # (opcional) Valida el título si quieres asegurarte del modal correcto
+    # try:
+    #     titulo = modal.find_element(By.XPATH, ".//h2[contains(.,'reprogramar')]")
+    # except Exception:
+    #     raise TimeoutError("No es el modal esperado de reprogramación.")
+
+    # 2) Dentro del modal, busca el botón "Confirmar" (a/button, con 'alert')
+    #    Priorizamos data-confirm-footer si existe.
+    xpath_btn = (
+        ".//div[@data-confirm-footer]"
+        "//a[contains(@class,'button') and contains(@class,'alert') and normalize-space()='Confirmar']"
+        " | .//div[@data-confirm-footer]"
+        "//button[contains(@class,'alert') and normalize-space()='Confirmar']"
+        " | .//a[contains(@class,'button') and contains(@class,'alert')][contains(.,'Confirmar')]"
+        " | .//button[contains(@class,'alert')][contains(.,'Confirmar')]"
+    )
+
+    btn_confirm = WebDriverWait(driver, timeout).until(
+        lambda d: modal.find_element(By.XPATH, xpath_btn)
+    )
+
+    # 3) Asegura visibilidad y clic
+    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn_confirm)
+
+    # Espera a que ese MISMO WebElement esté clickable
+    WebDriverWait(driver, timeout).until(EC.element_to_be_clickable(btn_confirm))
+
+    try:
+        btn_confirm.click()
+    except Exception:
+        # Fallback si hay overlay/intercepción
+        driver.execute_script("arguments[0].click();", btn_confirm)
+
+    # 4) Espera a que el modal desaparezca
+    WebDriverWait(driver, timeout).until(EC.invisibility_of_element_located(modal_locator))
+    print("✅ Popup de confirmación aceptado.")
 
 
 if __name__ == "__main__":
